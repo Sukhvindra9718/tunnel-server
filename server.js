@@ -32,18 +32,31 @@ const handleHttpRequest = (req, res) => {
     const client = clients.get(pathname.substring(1)); // Remove the leading '/' from the pathname
 
     if (client) {
-      console.log(`Routing request for path: ${pathname} to localhost:${client.port}`);
+      console.log(`Routing request for path: ${pathname} via WebSocket to client on port ${client.port}`);
 
-      // Proxy the request to the client's specified local server port
-      proxy.web(req, res, { target: `http://localhost:${client.port}` }, (error) => {
-        if (error) {
-          console.error('Error proxying request:', error);
-          if (!res.headersSent) {
-            // Ensure headers haven't been sent before responding
-            res.writeHead(500, { 'Content-Type': 'text/plain' });
-            res.end('Internal Server Error');
-          }
-        }
+      // Collect the incoming request data
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
+
+      req.on('end', () => {
+        // Forward the request to the client via WebSocket
+        client.ws.send(JSON.stringify({
+          url: req.url,
+          method: req.method,
+          headers: req.headers,
+          body: body || null,
+        }));
+
+        // Wait for the client's response via WebSocket
+        client.ws.on('message', (message) => {
+          const { statusCode, headers, body } = JSON.parse(message);
+
+          // Send the response back to the original HTTP request
+          res.writeHead(statusCode, headers);
+          res.end(body);
+        });
       });
     } else {
       // If no matching tunnel is found, send a 404 response
@@ -76,7 +89,7 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     console.log('Client disconnected');
-    
+
     // Remove the client from the map when it disconnects
     for (const [key, client] of clients.entries()) {
       if (client.ws === ws) {
