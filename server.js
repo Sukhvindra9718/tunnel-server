@@ -6,57 +6,44 @@ const url = require('url');
 const TUNNEL_PORT = 3000;
 const LOCAL_SERVER_PORT = 8080;
 
-
 // Map to store clients and their respective tunnel paths
 const clients = new Map();
+
 // Create an HTTP proxy server
 const proxy = httpProxy.createProxyServer({ changeOrigin: true });
 
+// Handle incoming HTTP requests to the tunnel server
 const server = http.createServer((req, res) => {
   const pathname = url.parse(req.url).pathname;
 
-  if (req.method === 'POST' && pathname === '/request-tunnel') {
-    // Generate a unique tunnel path for this client
-    const tunnelPath = Math.random().toString(36).substring(2, 10);
-    const tunnelUrl = `http://localhost:3000/${tunnelPath}`;
+  // Check if the incoming request matches any active tunnel path
+  const client = clients.get(pathname.substring(1)); // Remove the leading '/' from the pathname
 
-    // Associate the tunnel path with the WebSocket client
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ url: tunnelUrl }));
-
-    console.log(`Tunnel created: ${tunnelUrl}`);
+  if (client) {
+    console.log(`Routing request for path: ${pathname} to localhost:${LOCAL_SERVER_PORT}`);
+    
+    // Proxy the request to the local server running on port 8080
+    proxy.web(req, res, { target: `http://localhost:${LOCAL_SERVER_PORT}` }, (error) => {
+      if (error) {
+        console.error('Error proxying request:', error);
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Internal Server Error');
+      }
+    });
   } else {
-    // Check if the incoming request matches any active tunnel path
-    const pathname = url.parse(req.url).pathname;
-
-    // Check if the incoming request matches any active tunnel path
-    const client = clients.get(pathname.substring(1)); // Remove the leading '/' from the pathname
-
-    if (client) {
-      console.log(`Routing request for path: ${pathname} to localhost:${LOCAL_SERVER_PORT}`);
-
-      // Proxy the request to the local server running on port 8080
-      proxy.web(req, res, { target: `http://localhost:${LOCAL_SERVER_PORT}` }, (error) => {
-        if (error) {
-          console.error('Error proxying request:', error);
-          res.writeHead(500, { 'Content-Type': 'text/plain' });
-          res.end('Internal Server Error');
-        }
-      });
-    } else {
-      // If no matching tunnel is found
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('Tunnel Not Found');
-    }
+    // If no matching tunnel is found
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Tunnel Not Found');
   }
 });
 
+// WebSocket server to handle client connections
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws) => {
   console.log('New client connected');
 
-  // Store the WebSocket client and its tunnel path in the clients map
+  // Listen for incoming messages from the client
   ws.on('message', (message) => {
     const { tunnelPath } = JSON.parse(message);
 
@@ -67,6 +54,7 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     console.log('Client disconnected');
+    
     // Remove the client from the map when it disconnects
     for (const [key, client] of clients.entries()) {
       if (client === ws) {
@@ -78,6 +66,27 @@ wss.on('connection', (ws) => {
   });
 });
 
+// Endpoint for clients to request a tunnel
+server.on('request', (req, res) => {
+  if (req.method === 'POST' && req.url === '/request-tunnel') {
+    // Generate a unique tunnel path for this client
+    const tunnelPath = Math.random().toString(36).substring(2, 10);
+    
+    // Generate a public tunnel URL using the correct domain
+    const tunnelUrl = `https://tunnel-server-ojd4.onrender.com/${tunnelPath}`;
+
+    // Respond with the tunnel URL
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ url: tunnelUrl }));
+
+    console.log(`Tunnel created: ${tunnelUrl}`);
+  } else {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not Found');
+  }
+});
+
+// Start the server on the tunnel port
 server.listen(TUNNEL_PORT, () => {
   console.log(`Tunnel server listening on port ${TUNNEL_PORT}`);
 });
