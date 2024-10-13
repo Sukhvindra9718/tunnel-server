@@ -49,8 +49,8 @@ const handleHttpRequest = (req, res) => {
           body: body || null,
         }));
 
-        // Wait for the client's response via WebSocket
-        client.ws.on('message', (message) => {
+        // Attach a one-time listener for the client's response via WebSocket
+        client.ws.once('message', (message) => {
           const { statusCode, headers, body } = JSON.parse(message);
 
           // Send the response back to the original HTTP request
@@ -61,7 +61,6 @@ const handleHttpRequest = (req, res) => {
     } else {
       // If no matching tunnel is found, send a 404 response
       if (!res.headersSent) {
-        // Ensure headers haven't been sent before responding
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end('Tunnel Not Found');
       }
@@ -81,6 +80,13 @@ wss.on('connection', (ws) => {
   // Listen for incoming messages from the client
   ws.on('message', (message) => {
     const { tunnelPath, port } = JSON.parse(message);
+    console.log("message",message)
+    // If the client reconnects with the same tunnelPath, ensure we clean up the old connection
+    if (clients.has(tunnelPath)) {
+      const oldClient = clients.get(tunnelPath);
+      oldClient.ws.close(); // Close the old WebSocket connection
+      clients.delete(tunnelPath); // Remove the old client
+    }
 
     // Store the WebSocket connection and the local port for the generated tunnel path
     clients.set(tunnelPath, { ws, port });
