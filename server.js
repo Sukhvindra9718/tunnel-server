@@ -4,7 +4,9 @@ const httpProxy = require('http-proxy');
 const url = require('url');
 
 const TUNNEL_PORT = 3000;
-const clients = new Map(); // Store connected clients with their tunnel path and ports
+
+// Map to store clients, their respective tunnel paths, and the local ports
+const clients = new Map();
 
 // Create an HTTP proxy server
 const proxy = httpProxy.createProxyServer({ changeOrigin: true });
@@ -12,26 +14,44 @@ const proxy = httpProxy.createProxyServer({ changeOrigin: true });
 // Handle incoming HTTP requests to the tunnel server
 const handleHttpRequest = (req, res) => {
   const pathname = url.parse(req.url).pathname;
-  const client = clients.get(pathname.substring(1)); // Get the client by tunnel path
 
-  if (client) {
-    console.log(`Routing request for path: ${pathname} to localhost:${client.port}`);
+  if (req.method === 'POST' && req.url === '/request-tunnel') {
+    // Generate a unique tunnel path for this client
+    const tunnelPath = Math.random().toString(36).substring(2, 10);
 
-    // Proxy the request to the client's local server on the specified port
-    proxy.web(req, res, { target: `http://localhost:${client.port}` }, (error) => {
-      if (error) {
-        console.error('Error proxying request:', error);
-        if (!res.headersSent) {
-          res.writeHead(500, { 'Content-Type': 'text/plain' });
-          res.end('Internal Server Error');
-        }
-      }
-    });
+    // Generate a public tunnel URL using the correct domain
+    const tunnelUrl = `https://tunnel-server-ojd4.onrender.com/${tunnelPath}`;
+
+    // Respond with the tunnel URL
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ url: tunnelUrl }));
+
+    console.log(`Tunnel created: ${tunnelUrl}`);
   } else {
-    // If no matching tunnel is found, send a 404 response
-    if (!res.headersSent) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('Tunnel Not Found');
+    // Check if the incoming request matches any active tunnel path
+    const client = clients.get(pathname.substring(1)); // Remove the leading '/' from the pathname
+
+    if (client) {
+      console.log(`Routing request for path: ${pathname} to localhost:${client.port}`);
+
+      // Proxy the request to the client's specified local server port
+      proxy.web(req, res, { target: `http://localhost:${client.port}` }, (error) => {
+        if (error) {
+          console.error('Error proxying request:', error);
+          if (!res.headersSent) {
+            // Ensure headers haven't been sent before responding
+            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.end('Internal Server Error');
+          }
+        }
+      });
+    } else {
+      // If no matching tunnel is found, send a 404 response
+      if (!res.headersSent) {
+        // Ensure headers haven't been sent before responding
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Tunnel Not Found');
+      }
     }
   }
 };
@@ -49,7 +69,7 @@ wss.on('connection', (ws) => {
   ws.on('message', (message) => {
     const { tunnelPath, port } = JSON.parse(message);
 
-    // Store the WebSocket connection for the generated tunnel path and port
+    // Store the WebSocket connection and the local port for the generated tunnel path
     clients.set(tunnelPath, { ws, port });
     console.log(`Client registered for tunnel path: ${tunnelPath} on port: ${port}`);
   });
@@ -66,28 +86,6 @@ wss.on('connection', (ws) => {
       }
     }
   });
-});
-
-// Endpoint for clients to request a tunnel
-server.on('request', (req, res) => {
-  if (req.method === 'POST' && req.url === '/request-tunnel') {
-    const requestBody = [];
-    req.on('data', chunk => requestBody.push(chunk));
-    req.on('end', () => {
-      const { port } = JSON.parse(Buffer.concat(requestBody).toString());
-      const tunnelPath = Math.random().toString(36).substring(2, 10);
-      const tunnelUrl = `https://tunnel-server-ojd4.onrender.com/${tunnelPath}`;
-      
-      // Respond with the tunnel URL
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ url: tunnelUrl }));
-
-      console.log(`Tunnel created: ${tunnelUrl} for port: ${port}`);
-    });
-  } else {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not Found');
-  }
 });
 
 // Start the server on the tunnel port
