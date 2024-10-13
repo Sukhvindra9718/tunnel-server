@@ -79,7 +79,7 @@ wss.on('connection', (ws) => {
 
   // Listen for incoming messages from the client
   ws.on('message', (message) => {
-    const { tunnelPath, port } = JSON.parse(message);
+    const { tunnelPath, port } = JSON.parse(message.toString());
     console.log("message",message)
     // If the client reconnects with the same tunnelPath, ensure we clean up the old connection
     if (clients.has(tunnelPath)) {
