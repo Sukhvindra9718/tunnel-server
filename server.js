@@ -43,9 +43,9 @@ const handleHttpRequest = (req, res) => {
 
       req.on('end', () => {
         // Forward the request to the client via WebSocket
-        console.log("req",req)
+        // console.log("req",req)
         client.ws.send(JSON.stringify({
-          url: `https://tunnel-server-ojd4.onrender.com/${req.url}`,
+          url: `${req.url}`,
           method: req.method,
           headers: req.headers,
           body: body || null,
