@@ -29,6 +29,7 @@ const handleHttpRequest = (req, res) => {
     console.log(`Tunnel created: ${tunnelUrl}`);
   } else {
     // Check if the incoming request matches any active tunnel path
+    console.log("pathname",pathname)
     const client = clients.get(pathname.substring(1)); // Remove the leading '/' from the pathname
 
     if (client) {
@@ -43,7 +44,7 @@ const handleHttpRequest = (req, res) => {
       req.on('end', () => {
         // Forward the request to the client via WebSocket
         client.ws.send(JSON.stringify({
-          url: req.url,
+          url: tunnelUrl,
           method: req.method,
           headers: req.headers,
           body: body || null,
