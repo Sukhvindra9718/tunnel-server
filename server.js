@@ -1,15 +1,12 @@
 const WebSocket = require('ws');
 const http = require('http');
-const httpProxy = require('http-proxy');
 const url = require('url');
 
 const TUNNEL_PORT = 3000;
 
 // Map to store clients, their respective tunnel paths, and the local ports
 const clients = new Map();
-
-// Create an HTTP proxy server
-const proxy = httpProxy.createProxyServer({ changeOrigin: true });
+const pendingRequests = new Map(); // Store pending HTTP responses by tunnel path
 
 // Handle incoming HTTP requests to the tunnel server
 const handleHttpRequest = (req, res) => {
@@ -28,9 +25,10 @@ const handleHttpRequest = (req, res) => {
 
     console.log(`Tunnel created: ${tunnelUrl}`);
   } else {
-    // Check if the incoming request matches any active tunnel path
-    console.log("pathname", pathname)
-    const client = clients.get(pathname.substring(1)); // Remove the leading '/' from the pathname
+    console.log("Received request with pathname:", pathname);
+
+    const tunnelPath = pathname.substring(1); // Remove the leading '/' from the pathname
+    const client = clients.get(tunnelPath);
 
     if (client) {
       console.log(`Routing request for path: ${pathname} via WebSocket to client on port ${client.port}`);
@@ -42,30 +40,27 @@ const handleHttpRequest = (req, res) => {
       });
 
       req.on('end', () => {
+        // Store the pending HTTP response for later use when the WebSocket client responds
+        pendingRequests.set(tunnelPath, res);
+
         // Forward the request to the client via WebSocket
-        // console.log("req",req)
         client.ws.send(JSON.stringify({
           url: `${req.url}`,
           method: req.method,
           headers: req.headers,
           body: body || null,
         }));
+      });
 
-        // Attach a one-time listener for the client's response via WebSocket
-        client.ws.once('message', (message) => {
-          const { statusCode, headers, body } = JSON.parse(message);
-
-          // Send the response back to the original HTTP request
-          res.writeHead(statusCode, headers);
-          res.end(body);
-        });
+      req.on('error', (error) => {
+        console.error(`Error in request handling for path ${pathname}:`, error);
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Error while forwarding request');
       });
     } else {
-      // If no matching tunnel is found, send a 404 response
-      if (!res.headersSent) {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
-        res.end('Tunnel Not Found');
-      }
+      console.error(`No client found for path: ${pathname}`);
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Tunnel Not Found');
     }
   }
 };
@@ -82,25 +77,33 @@ wss.on('connection', (ws) => {
   // Listen for incoming messages from the client
   ws.on('message', (message) => {
     try {
-      // Convert the buffer to a string and then parse the JSON
       const parsedMessage = JSON.parse(message.toString());
 
-      console.log('Received WebSocket message:', parsedMessage);
-      const { tunnelPath, port } = parsedMessage;
-      console.log(`Parsed WebSocket message: tunnelPath=${tunnelPath}, port=${port}`);
-
-      if (tunnelPath && port) {
-        // If the client reconnects with the same tunnelPath, ensure we clean up the old connection
-        if (clients.has(tunnelPath)) {
-          const oldClient = clients.get(tunnelPath);
-          oldClient.ws.close(); // Close the old WebSocket connection
-          clients.delete(tunnelPath); // Remove the old client
-        }
-        // Store the client details with the correct tunnelPath and port
+      // Check if the message is a registration message (tunnelPath and port)
+      if (parsedMessage.tunnelPath && parsedMessage.port) {
+        // Registration message
+        const { tunnelPath, port } = parsedMessage;
         clients.set(tunnelPath, { ws, port });
         console.log(`Client registered for tunnel path: ${tunnelPath} on port: ${port}`);
+      } else if (parsedMessage.statusCode) {
+        // HTTP response message from the client
+        const { statusCode, headers, body } = parsedMessage;
+
+        // Retrieve the pending HTTP response object using the tunnelPath
+        const res = pendingRequests.get(parsedMessage.url.split('/').pop());
+
+        if (res) {
+          // Send the response back to the original HTTP request
+          res.writeHead(statusCode, headers);
+          res.end(body);
+
+          // Remove the pending response from the map
+          pendingRequests.delete(parsedMessage.url.split('/').pop());
+        } else {
+          console.error('No pending request found for this tunnel path');
+        }
       } else {
-        console.log('Received invalid tunnelPath or port');
+        console.log('Received invalid message');
       }
     } catch (error) {
       console.error('Error parsing WebSocket message:', error);
@@ -118,6 +121,10 @@ wss.on('connection', (ws) => {
         break;
       }
     }
+  });
+
+  ws.on('error', (error) => {
+    console.error('WebSocket error:', error);
   });
 });
 
