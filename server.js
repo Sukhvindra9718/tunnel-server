@@ -29,7 +29,7 @@ const handleHttpRequest = (req, res) => {
     console.log(`Tunnel created: ${tunnelUrl}`);
   } else {
     // Check if the incoming request matches any active tunnel path
-    console.log("pathname",pathname)
+    console.log("pathname", pathname)
     const client = clients.get(pathname.substring(1)); // Remove the leading '/' from the pathname
 
     if (client) {
@@ -81,18 +81,30 @@ wss.on('connection', (ws) => {
 
   // Listen for incoming messages from the client
   ws.on('message', (message) => {
-    const { tunnelPath, port } = JSON.parse(message.toString());
-    console.log("message",message)
-    // If the client reconnects with the same tunnelPath, ensure we clean up the old connection
-    if (clients.has(tunnelPath)) {
-      const oldClient = clients.get(tunnelPath);
-      oldClient.ws.close(); // Close the old WebSocket connection
-      clients.delete(tunnelPath); // Remove the old client
-    }
+    try {
+      // Convert the buffer to a string and then parse the JSON
+      const parsedMessage = JSON.parse(message.toString());
 
-    // Store the WebSocket connection and the local port for the generated tunnel path
-    clients.set(tunnelPath, { ws, port });
-    console.log(`Client registered for tunnel path: ${tunnelPath} on port: ${port}`);
+      console.log('Received WebSocket message:', parsedMessage);
+      const { tunnelPath, port } = parsedMessage;
+      console.log(`Parsed WebSocket message: tunnelPath=${tunnelPath}, port=${port}`);
+
+      if (tunnelPath && port) {
+        // If the client reconnects with the same tunnelPath, ensure we clean up the old connection
+        if (clients.has(tunnelPath)) {
+          const oldClient = clients.get(tunnelPath);
+          oldClient.ws.close(); // Close the old WebSocket connection
+          clients.delete(tunnelPath); // Remove the old client
+        }
+        // Store the client details with the correct tunnelPath and port
+        clients.set(tunnelPath, { ws, port });
+        console.log(`Client registered for tunnel path: ${tunnelPath} on port: ${port}`);
+      } else {
+        console.log('Received invalid tunnelPath or port');
+      }
+    } catch (error) {
+      console.error('Error parsing WebSocket message:', error);
+    }
   });
 
   ws.on('close', () => {
